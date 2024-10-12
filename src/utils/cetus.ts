@@ -1,5 +1,6 @@
 import { adjustForSlippage, Percentage, d, Pool } from "@cetusprotocol/cetus-sui-clmm-sdk";
-import { BN } from 'bn.js'
+
+import BN from 'bn.js'
 
 import { getTokenBalance, sleep } from './index'
 import { cetusClmmSDK } from '../cetus-config'
@@ -26,7 +27,7 @@ export async function fetchPool(poolAddress: string): Promise<Pool> {
     return pool;
 }
 
-export async function buySwap(wallet: any, amount: number, slippage_percent: number, poolAddress: string): Promise<boolean> {
+export async function buySwap(wallet: any, amount: BN, slippage_percent: number, poolAddress: string): Promise<boolean> {
     const pool = await fetchPool(poolAddress);
     
     const coinAMetadata = await cetusClmmSDK.fullClient.getCoinMetadata({ coinType: pool.coinTypeA });
@@ -110,7 +111,7 @@ export async function buySwap(wallet: any, amount: number, slippage_percent: num
     return true;
 } 
 
-export async function sellSwap(wallet: any, amount: number, slippage_percent: number, poolAddress:string): Promise<boolean> {
+export async function sellSwap(wallet: any, amount: BN, slippage_percent: number, poolAddress:string): Promise<boolean> {
     const pool = await fetchPool(poolAddress);
     
     const coinAMetadata = await cetusClmmSDK.fullClient.getCoinMetadata({ coinType: pool.coinTypeA });
@@ -122,13 +123,13 @@ export async function sellSwap(wallet: any, amount: number, slippage_percent: nu
     const slippage = Percentage.fromDecimal(d(slippage_percent));
 
     const tokenBalance = await getTokenBalance(wallet.publicKey, pool.coinTypeA);
-    if (!tokenBalance && tokenBalance.totalBalance < amount) {
+    if (!tokenBalance || new BN(tokenBalance.totalBalance).lt(amount)) {
         console.error(`No tokens available for selling in wallet: ${wallet.publicKey}`);
         return false;
     }
 
     console.log(`Sell Token Amount: ${tokenBalance.totalBalance}`);
-    const coinAmount = new BN(amount);
+    const coinAmount = amount;
 
     const res: any = await cetusClmmSDK.Swap.preswap({
         pool: pool,
