@@ -1,4 +1,4 @@
-import { adjustForSlippage, Percentage, d, Pool } from "@cetusprotocol/cetus-sui-clmm-sdk";
+import { adjustForSlippage, Percentage, d, Pool, TickMath, printTransaction } from "@cetusprotocol/cetus-sui-clmm-sdk";
 
 import BN from 'bn.js'
 
@@ -25,6 +25,30 @@ export async function getPoolByCoin(coinType: string) {
 export async function fetchPool(poolAddress: string): Promise<Pool> {
     const pool = await cetusClmmSDK.Pool.getPool(poolAddress)
     return pool;
+}
+
+export const createPool = async (wallet: any) => {
+    cetusClmmSDK.senderAddress = wallet.getPublicKey().toSuiAddress()
+    const tick_spacing = 2
+    const initialize_price = 1
+    const coin_a_decimals = 6
+    const coin_b_decimals = 6
+    const coin_type_a = `${cetusClmmSDK.sdkOptions.faucet?.package_id}::usdt::USDT`
+    const coin_type_b = `${cetusClmmSDK.sdkOptions.faucet?.package_id}::usdc::USDC`
+
+    const creatPoolTransactionPayload = await cetusClmmSDK.Pool.creatPoolsTransactionPayload([
+      {
+        tick_spacing: tick_spacing,
+        initialize_sqrt_price: TickMath.priceToSqrtPriceX64(d(initialize_price), coin_a_decimals, coin_b_decimals).toString(),
+        uri: '',
+        coinTypeA: coin_type_a,
+        coinTypeB: coin_type_b,
+      },
+    ])
+
+    printTransaction(creatPoolTransactionPayload)
+    const transferTxn = await cetusClmmSDK.fullClient.sendTransaction(wallet.wallet, creatPoolTransactionPayload)
+    console.log('createPool: ', transferTxn)
 }
 
 export async function buySwap(wallet: any, amount: BN, slippage_percent: number, poolAddress: string): Promise<boolean> {
