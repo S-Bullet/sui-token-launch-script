@@ -3,11 +3,11 @@ import { BN } from 'bn.js'
 import { SuiClient, getFullnodeUrl } from '@mysten/sui/client'
 
 import { getTokenBalance, sleep } from './index'
-import { TestnetSDK as cetusClmmSDK } from './init_testnet_sdk'
+import { mainnetSDK as cetusClmmSDK } from './init_mainnet_sdk'
 import { MAX_TICK_RANGE, TICK_SPACING } from "./cetus-config";
 
 const suiClient = new SuiClient({
-    url: getFullnodeUrl("testnet"),
+    url: getFullnodeUrl("mainnet"),
 });
 
 export const createPool = async (

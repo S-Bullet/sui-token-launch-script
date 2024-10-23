@@ -3,7 +3,7 @@ import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { CoinBalance, SuiClient, getFullnodeUrl } from '@mysten/sui/client'
 import { Transaction } from '@mysten/sui/transactions'
 
-import { TestnetSDK as cetusClmmSDK } from './init_testnet_sdk'
+import { mainnetSDK as cetusClmmSDK } from './init_mainnet_sdk'
 import * as config from '../config';
 import { getWalletFromPrivateKey } from './wallet';
 import { buildSuiContract } from '../api';
@@ -14,7 +14,7 @@ import { send } from 'process';
 dotenv.config();
 
 const suiClient = new SuiClient({
-    url: getFullnodeUrl("testnet"),
+    url: getFullnodeUrl("mainnet"),
 });
 
 export const sleep = (ms: number) => {

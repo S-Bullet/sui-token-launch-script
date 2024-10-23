@@ -65,4 +65,4 @@ export const clmmMainnet: SdkOptions = {
   aggregatorUrl: 'https://api-sui.cetus.zone/router'
 }
 
-export const SDK = new CetusClmmSDK(clmmMainnet)
+export const mainnetSDK = new CetusClmmSDK(clmmMainnet)
