@@ -1,9 +1,147 @@
-import { adjustForSlippage, Percentage, d, Pool, TickMath, printTransaction, ClmmPoolUtil } from "@cetusprotocol/cetus-sui-clmm-sdk";
-
-import BN from 'bn.js'
+import { adjustForSlippage, Percentage, d, Pool, TickMath, printTransaction, CreatePoolParams, ClmmPoolUtil, CreatePoolAddLiquidityParams } from "@cetusprotocol/cetus-sui-clmm-sdk";
+import { BN } from 'bn.js'
+import { SuiClient, getFullnodeUrl } from '@mysten/sui/client'
 
 import { getTokenBalance, sleep } from './index'
-import { cetusClmmSDK } from '../cetus-config'
+import { TestnetSDK as cetusClmmSDK } from './init_testnet_sdk'
+import { MAX_TICK_RANGE, TICK_SPACING } from "./cetus-config";
+
+const suiClient = new SuiClient({
+    url: getFullnodeUrl("testnet"),
+});
+
+export const createPool = async (
+    wallet: any, 
+    coin_type_a: string, 
+    coin_type_b: string
+) => {
+    cetusClmmSDK.senderAddress = wallet.publicKey
+    const tick_spacing = TICK_SPACING
+    const initialize_price = 1.01
+    const coin_a_decimals = 6
+    const coin_b_decimals = 6
+    // const coin_type_a = `${cetusClmmSDK.sdkOptions.faucet?.package_id}::usdt::USDT`
+    // const coin_type_b = `${cetusClmmSDK.sdkOptions.faucet?.package_id}::usdc::USDC`
+
+    const paramss: CreatePoolParams = {
+        tick_spacing: tick_spacing,
+        initialize_sqrt_price: TickMath.priceToSqrtPriceX64(
+            d(initialize_price),
+            coin_a_decimals,
+            coin_b_decimals
+        ).toString(),
+        uri: '',
+        coinTypeA: coin_type_a,
+        coinTypeB: coin_type_b,
+    }
+
+    const creatPoolTransactionPayload = await cetusClmmSDK.Pool.creatPoolsTransactionPayload([paramss])
+
+    printTransaction(creatPoolTransactionPayload)
+    const transferTxn = await cetusClmmSDK.fullClient.sendTransaction(wallet.wallet, creatPoolTransactionPayload)
+    // console.log('createPool: ', JSON.stringify(transferTxn))
+
+    //@ts-ignore
+    const poolAddr = transferTxn.events.parsedJson.pool_id;
+
+    return poolAddr;
+}
+
+export const createPoolWithInitialLiquidity = async (
+    wallet: any,
+    coin_type_a: string, 
+    coin_type_b: string, 
+    coin_amount: number,
+    initialize_price: number,
+    slippage: number,
+    is_full_range?: boolean
+): Promise<string> => {
+    cetusClmmSDK.senderAddress = wallet.publicKey;
+
+    const tick_spacing = TICK_SPACING
+    
+    const coinAMetadata = await cetusClmmSDK.fullClient.getCoinMetadata({ coinType: coin_type_a });
+    const coinBMetadata = await cetusClmmSDK.fullClient.getCoinMetadata({ coinType: coin_type_b });
+
+    const coin_a_decimals = coinAMetadata?.decimals || 9
+    const coin_b_decimals = coinBMetadata?.decimals || 9
+
+    const initialize_sqrt_price = TickMath.priceToSqrtPriceX64(d(initialize_price), coin_a_decimals, coin_b_decimals).toString();
+    const current_tick_index = TickMath.sqrtPriceX64ToTickIndex(new BN(initialize_sqrt_price))
+    
+    const fullTick = Math.floor(MAX_TICK_RANGE / TICK_SPACING) * TICK_SPACING;
+    const lowerTick = is_full_range? -fullTick : TickMath.getPrevInitializableTickIndex(new BN(current_tick_index).toNumber(), new BN(tick_spacing).toNumber())
+    const upperTick = is_full_range? fullTick : TickMath.getNextInitializableTickIndex(new BN(current_tick_index).toNumber(), new BN(tick_spacing).toNumber())
+
+    // const coin_type_a = `${sdk.sdkOptions.faucet?.package_id}::usdt::USDT`
+    // const coin_type_b = `{sdk.sdkOptions.faucet?.package_id}::usdc::USDC`
+    
+    const fix_coin_amount = new BN(coin_amount * Math.pow(10, coin_a_decimals))
+    const fix_amount_a = true
+    const curSqrtPrice = new BN(initialize_sqrt_price)
+
+    const liquidityInput = ClmmPoolUtil.estLiquidityAndcoinAmountFromOneAmounts(
+        lowerTick,
+        upperTick,
+        fix_coin_amount,
+        fix_amount_a,
+        true,
+        slippage,
+        curSqrtPrice
+      )
+  
+    const amount_a = fix_amount_a ? fix_coin_amount.toNumber() : liquidityInput.tokenMaxA.toNumber()
+    const amount_b = fix_amount_a ? liquidityInput.tokenMaxB.toNumber() : fix_coin_amount.toNumber()
+  
+    // console.log('A: ', coin_type_a)
+    // console.log('B: ', coin_type_b)
+    // console.log('tick_spacing: ', tick_spacing)
+    // console.log('initialize_sqrt_price: ', initialize_sqrt_price)
+    // console.log('amount: ', { amount_a, amount_b })
+    // console.log('fix_amount_a: ', fix_amount_a)
+    // console.log('amount: ', { lowerTick, upperTick })
+    // console.log('slippage: ', slippage)
+
+    const paramss: CreatePoolAddLiquidityParams = {
+        coinTypeA: coin_type_a,
+        coinTypeB: coin_type_b,
+        tick_spacing: tick_spacing,
+        initialize_sqrt_price: initialize_sqrt_price,
+        uri: '',
+        amount_a: amount_a,
+        amount_b: amount_b,
+        fix_amount_a: fix_amount_a,
+        tick_lower: lowerTick,
+        tick_upper: upperTick,
+        slippage
+    }
+
+    const creatPoolTransactionPayload = await cetusClmmSDK.Pool.creatPoolTransactionPayload(paramss);
+
+    printTransaction(creatPoolTransactionPayload)
+    // const transferTxn = await cetusClmmSDK.fullClient.sendTransaction(wallet.wallet, creatPoolTransactionPayload)
+    const response = await suiClient.signAndExecuteTransaction({ 
+        signer: wallet.wallet, 
+        transaction: creatPoolTransactionPayload 
+    });    
+    const result = await suiClient.waitForTransaction({ 
+        digest: response.digest,
+        options: {
+            showEffects: true,
+        }
+    })
+    console.log('createPool: ', JSON.stringify(result))
+    console.log('createPool: ', result)
+    
+    //@ts-ignore
+    for (const created of result.effects.created) {
+        if (created.owner) {
+            return created.reference.objectId;
+        }
+    }
+
+    return '';
+}
 
 export async function getPoolByCoin(coinType: string) {
     try {
@@ -27,91 +165,11 @@ export async function fetchPool(poolAddress: string): Promise<Pool> {
     return pool;
 }
 
-export const createPool = async (
-    wallet: any, 
-    coin_type_a: string, 
-    coin_type_b: string
-) => {
-    cetusClmmSDK.senderAddress = wallet.getPublicKey().toSuiAddress()
-    const tick_spacing = 2
-    const initialize_price = 1
-    const coin_a_decimals = 6
-    const coin_b_decimals = 6
-    // const coin_type_a = `${cetusClmmSDK.sdkOptions.faucet?.package_id}::usdt::USDT`
-    // const coin_type_b = `${cetusClmmSDK.sdkOptions.faucet?.package_id}::usdc::USDC`
-
-    const creatPoolTransactionPayload = await cetusClmmSDK.Pool.creatPoolsTransactionPayload([
-      {
-        tick_spacing: tick_spacing,
-        initialize_sqrt_price: TickMath.priceToSqrtPriceX64(d(initialize_price), coin_a_decimals, coin_b_decimals).toString(),
-        uri: '',
-        coinTypeA: coin_type_a,
-        coinTypeB: coin_type_b,
-      },
-    ])
-
-    printTransaction(creatPoolTransactionPayload)
-    const transferTxn = await cetusClmmSDK.fullClient.sendTransaction(wallet.wallet, creatPoolTransactionPayload)
-    console.log('createPool: ', transferTxn)
-}
-
-export const createPoolAndLiquidity = async (
-    wallet: any,
-    coin_type_a: string, 
-    coin_type_b: string
-) => {
-    cetusClmmSDK.senderAddress = wallet.getPublicKey().toSuiAddress();
-
-    const initialize_sqrt_price = TickMath.priceToSqrtPriceX64(d(0.3), 6, 6).toString();
-    const tick_spacing = 2
-    const current_tick_index = TickMath.sqrtPriceX64ToTickIndex(new BN(initialize_sqrt_price))
+export async function buySwap(wallet: any, amount: number, slippage_percent: number, poolAddress: string): Promise<boolean> {
+    const pool = await cetusClmmSDK.Pool.getPool(poolAddress);
     
-    const lowerTick = TickMath.getPrevInitializableTickIndex(new BN(current_tick_index).toNumber(), new BN(tick_spacing).toNumber())
-    const upperTick = TickMath.getNextInitializableTickIndex(new BN(current_tick_index).toNumber(), new BN(tick_spacing).toNumber())
+    // console.log(pool);
 
-    // const coin_type_a = `${sdk.sdkOptions.faucet?.package_id}::usdt::USDT`
-    // const coin_type_b = `{sdk.sdkOptions.faucet?.package_id}::usdc::USDC`
-    
-    const fix_coin_amount = new BN(200)
-    const fix_amount_a = true
-    const slippage = 0.05
-
-    const liquidityInput = ClmmPoolUtil.estLiquidityAndcoinAmountFromOneAmounts(
-        lowerTick,
-        upperTick,
-        fix_coin_amount,
-        fix_amount_a,
-        true,
-        slippage,
-        new BN(initialize_sqrt_price)
-      )
-  
-    const amount_a = fix_amount_a ? fix_coin_amount.toNumber() : liquidityInput.tokenMaxA.toNumber()
-    const amount_b = fix_amount_a ? liquidityInput.tokenMaxB.toNumber() : fix_coin_amount.toNumber()
-  
-    console.log('amount: ', { amount_a, amount_b })
-
-    const creatPoolTransactionPayload = await cetusClmmSDK.Pool.creatPoolTransactionPayload({
-        tick_spacing: tick_spacing,
-        initialize_sqrt_price: initialize_sqrt_price,
-        uri: '',
-        coinTypeA: coin_type_a,
-        coinTypeB: coin_type_b,
-        amount_a: amount_a,
-        amount_b: amount_b,
-        slippage,
-        fix_amount_a: fix_amount_a,
-        tick_lower: lowerTick,
-        tick_upper: upperTick,
-    })
-
-    const transferTxn = await cetusClmmSDK.fullClient.sendTransaction(wallet.wallet(), creatPoolTransactionPayload)
-    console.log('doCreatPool: ', transferTxn)
-}
-
-export async function buySwap(wallet: any, amount: BN, slippage_percent: number, poolAddress: string): Promise<boolean> {
-    const pool = await fetchPool(poolAddress);
-    
     const coinAMetadata = await cetusClmmSDK.fullClient.getCoinMetadata({ coinType: pool.coinTypeA });
     const coinBMetadata = await cetusClmmSDK.fullClient.getCoinMetadata({ coinType: pool.coinTypeB });
 
@@ -150,33 +208,32 @@ export async function buySwap(wallet: any, amount: BN, slippage_percent: number,
         amount: res.amount.toString(),
         amount_limit: amountLimit.toString(),
     });
-
-    transactionBlock.setGasBudget(10000000)
+    // transactionBlock.setGasBudget(10000000)
     
-    transactionBlock.setSender(wallet.publicKey);
-    transactionBlock.setGasOwner(wallet.publicKey);
+    // transactionBlock.setSender(wallet.publicKey);
+    // transactionBlock.setGasOwner(wallet.publicKey);
 
-    const kindBytes = await transactionBlock.build({ client: cetusClmmSDK.fullClient });
-    const sponsorSign = await wallet.wallet.signTransaction(kindBytes);
-    const senderSign = await wallet.wallet.signTransaction(kindBytes);
+    // const kindBytes = await transactionBlock.build({ client: cetusClmmSDK.fullClient });
+    // const sponsorSign = await wallet.wallet.signTransaction(kindBytes);
+    // const senderSign = await wallet.wallet.signTransaction(kindBytes);
     let swapTxn;
 
     // Retry logic for locked objects
     let retries = 3;
     while (retries > 0) {
         try {
-            // swapTxn = await cetusClmmSDK.fullClient.sendTransaction(wallet.wallet, transactionBlock);
-            swapTxn = await cetusClmmSDK.fullClient.executeTransactionBlock({
-                transactionBlock: kindBytes,
-                signature: [senderSign.signature, sponsorSign.signature],
-                options: {
-                    showEffects: false,
-                    showBalanceChanges: true,
-                    showEvents: false,
-                    showInput: false,
-                    showObjectChanges: false,
-                },
-            });
+            swapTxn = await cetusClmmSDK.fullClient.sendTransaction(wallet.wallet, transactionBlock);
+            // swapTxn = await cetusClmmSDK.fullClient.executeTransactionBlock({
+            //     transactionBlock: kindBytes,
+            //     signature: [senderSign.signature, sponsorSign.signature],
+            //     options: {
+            //         showEffects: false,
+            //         showBalanceChanges: true,
+            //         showEvents: false,
+            //         showInput: false,
+            //         showObjectChanges: false,
+            //     },
+            // });
             console.log(swapTxn);
             break;
         } catch (error) {
@@ -193,7 +250,7 @@ export async function buySwap(wallet: any, amount: BN, slippage_percent: number,
     return true;
 } 
 
-export async function sellSwap(wallet: any, amount: BN, slippage_percent: number, poolAddress:string): Promise<boolean> {
+export async function sellSwap(wallet: any, amount: number, slippage_percent: number, poolAddress:string): Promise<boolean> {
     const pool = await fetchPool(poolAddress);
     
     const coinAMetadata = await cetusClmmSDK.fullClient.getCoinMetadata({ coinType: pool.coinTypeA });
@@ -205,13 +262,15 @@ export async function sellSwap(wallet: any, amount: BN, slippage_percent: number
     const slippage = Percentage.fromDecimal(d(slippage_percent));
 
     const tokenBalance = await getTokenBalance(wallet.publicKey, pool.coinTypeA);
-    if (!tokenBalance || new BN(tokenBalance.totalBalance).lt(amount)) {
+    //@ts-ignore
+    if (!tokenBalance && tokenBalance.totalBalance < amount) {
         console.error(`No tokens available for selling in wallet: ${wallet.publicKey}`);
         return false;
     }
 
+    //@ts-ignore
     console.log(`Sell Token Amount: ${tokenBalance.totalBalance}`);
-    const coinAmount = amount;
+    const coinAmount = new BN(amount);
 
     const res: any = await cetusClmmSDK.Swap.preswap({
         pool: pool,
